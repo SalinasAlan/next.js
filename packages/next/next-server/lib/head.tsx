@@ -62,8 +62,10 @@ function unique() {
 
   return (h: React.ReactElement<any>) => {
     let isUnique = true
+    let hasKey = false
 
     if (h.key && typeof h.key !== 'number' && h.key.indexOf('$') > 0) {
+      hasKey = true
       const key = h.key.slice(h.key.indexOf('$') + 1)
       if (keys.has(key)) {
         isUnique = false
@@ -96,7 +98,7 @@ function unique() {
           } else {
             const category = h.props[metatype]
             const categories = metaCategories[metatype] || new Set()
-            if (categories.has(category)) {
+            if ((metatype !== 'name' || !hasKey) && categories.has(category)) {
               isUnique = false
             } else {
               categories.add(category)
@@ -145,13 +147,18 @@ function reduceComponents(
           c.type === 'link' &&
           c.props['href'] &&
           // TODO(prateekbh@): Replace this with const from `constants` when the tree shaking works.
-          ['https://fonts.googleapis.com/css'].some((url) =>
-            c.props['href'].startsWith(url)
-          )
+          [
+            'https://fonts.googleapis.com/css',
+            'https://use.typekit.net/',
+          ].some((url) => c.props['href'].startsWith(url))
         ) {
           const newProps = { ...(c.props || {}) }
           newProps['data-href'] = newProps['href']
           newProps['href'] = undefined
+
+          // Add this attribute to make it easy to identify optimized tags
+          newProps['data-optimized-fonts'] = true
+
           return React.cloneElement(c, newProps)
         }
       }
@@ -176,8 +183,5 @@ function Head({ children }: { children: React.ReactNode }) {
     </Effect>
   )
 }
-
-// TODO: Remove in the next major release
-Head.rewind = () => {}
 
 export default Head

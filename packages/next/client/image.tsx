@@ -16,7 +16,20 @@ if (typeof window === 'undefined') {
 const VALID_LOADING_VALUES = ['lazy', 'eager', undefined] as const
 type LoadingValue = typeof VALID_LOADING_VALUES[number]
 
-const loaders = new Map<LoaderValue, (props: LoaderProps) => string>([
+export type ImageLoader = (resolverProps: ImageLoaderProps) => string
+
+export type ImageLoaderProps = {
+  src: string
+  width: number
+  quality?: number
+}
+
+type DefaultImageLoaderProps = ImageLoaderProps & { root: string }
+
+const loaders = new Map<
+  LoaderValue,
+  (props: DefaultImageLoaderProps) => string
+>([
   ['imgix', imgixLoader],
   ['cloudinary', cloudinaryLoader],
   ['akamai', akamaiLoader],
@@ -32,33 +45,82 @@ const VALID_LAYOUT_VALUES = [
 ] as const
 type LayoutValue = typeof VALID_LAYOUT_VALUES[number]
 
+type PlaceholderValue = 'blur' | 'empty'
+
 type ImgElementStyle = NonNullable<JSX.IntrinsicElements['img']['style']>
+
+interface StaticImageData {
+  src: string
+  height: number
+  width: number
+  blurDataURL?: string
+}
+
+interface StaticRequire {
+  default: StaticImageData
+}
+
+type StaticImport = StaticRequire | StaticImageData
+
+function isStaticRequire(
+  src: StaticRequire | StaticImageData
+): src is StaticRequire {
+  return (src as StaticRequire).default !== undefined
+}
+
+function isStaticImageData(
+  src: StaticRequire | StaticImageData
+): src is StaticImageData {
+  return (src as StaticImageData).src !== undefined
+}
+
+function isStaticImport(src: string | StaticImport): src is StaticImport {
+  return (
+    typeof src === 'object' &&
+    (isStaticRequire(src as StaticImport) ||
+      isStaticImageData(src as StaticImport))
+  )
+}
+
+type StringImageProps = {
+  src: string
+} & (
+  | { width?: never; height?: never; layout: 'fill' }
+  | {
+      width: number | string
+      height: number | string
+      layout?: Exclude<LayoutValue, 'fill'>
+    }
+) &
+  (
+    | {
+        placeholder?: Exclude<PlaceholderValue, 'blur'>
+        blurDataURL?: never
+      }
+    | { placeholder: 'blur'; blurDataURL: string }
+  )
+
+type ObjectImageProps = {
+  src: StaticImport
+  width?: number | string
+  height?: number | string
+  layout?: LayoutValue
+  placeholder?: PlaceholderValue
+  blurDataURL?: never
+}
 
 export type ImageProps = Omit<
   JSX.IntrinsicElements['img'],
   'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'loading' | 'style'
 > & {
-  src: string
+  loader?: ImageLoader
   quality?: number | string
   priority?: boolean
   loading?: LoadingValue
   unoptimized?: boolean
   objectFit?: ImgElementStyle['objectFit']
   objectPosition?: ImgElementStyle['objectPosition']
-} & (
-    | {
-        width?: never
-        height?: never
-        /** @deprecated Use `layout="fill"` instead */
-        unsized: true
-      }
-    | { width?: never; height?: never; layout: 'fill' }
-    | {
-        width: number | string
-        height: number | string
-        layout?: Exclude<LayoutValue, 'fill'>
-      }
-  )
+} & (StringImageProps | ObjectImageProps)
 
 const {
   deviceSizes: configDeviceSizes,
@@ -75,8 +137,27 @@ allSizes.sort((a, b) => a - b)
 
 function getWidths(
   width: number | undefined,
-  layout: LayoutValue
+  layout: LayoutValue,
+  sizes: string | undefined
 ): { widths: number[]; kind: 'w' | 'x' } {
+  if (sizes && (layout === 'fill' || layout === 'responsive')) {
+    // Find all the "vw" percent sizes used in the sizes prop
+    const viewportWidthRe = /(^|\s)(1?\d?\d)vw/g
+    const percentSizes = []
+    for (let match; (match = viewportWidthRe.exec(sizes)); match) {
+      percentSizes.push(parseInt(match[2]))
+    }
+    if (percentSizes.length) {
+      const smallestRatio = Math.min(...percentSizes) * 0.01
+      return {
+        widths: allSizes.filter(
+          (s) => s >= configDeviceSizes[0] * smallestRatio
+        ),
+        kind: 'w',
+      }
+    }
+    return { widths: allSizes, kind: 'w' }
+  }
   if (
     typeof width !== 'number' ||
     layout === 'fill' ||
@@ -103,28 +184,11 @@ function getWidths(
   return { widths, kind: 'x' }
 }
 
-type CallLoaderProps = {
-  src: string
-  width: number
-  quality?: number
-}
-
-function callLoader(loaderProps: CallLoaderProps) {
-  const load = loaders.get(configLoader)
-  if (load) {
-    return load({ root: configPath, ...loaderProps })
-  }
-  throw new Error(
-    `Unknown "loader" found in "next.config.js". Expected: ${VALID_LOADERS.join(
-      ', '
-    )}. Received: ${configLoader}`
-  )
-}
-
 type GenImgAttrsData = {
   src: string
   unoptimized: boolean
   layout: LayoutValue
+  loader: ImageLoader
   width?: number
   quality?: number
   sizes?: string
@@ -143,30 +207,34 @@ function generateImgAttrs({
   width,
   quality,
   sizes,
+  loader,
 }: GenImgAttrsData): GenImgAttrsResult {
   if (unoptimized) {
     return { src, srcSet: undefined, sizes: undefined }
   }
 
-  const { widths, kind } = getWidths(width, layout)
+  const { widths, kind } = getWidths(width, layout, sizes)
   const last = widths.length - 1
 
-  const srcSet = widths
-    .map(
-      (w, i) =>
-        `${callLoader({ src, quality, width: w })} ${
-          kind === 'w' ? w : i + 1
-        }${kind}`
-    )
-    .join(', ')
+  return {
+    sizes: !sizes && kind === 'w' ? '100vw' : sizes,
+    srcSet: widths
+      .map(
+        (w, i) =>
+          `${loader({ src, quality, width: w })} ${
+            kind === 'w' ? w : i + 1
+          }${kind}`
+      )
+      .join(', '),
 
-  if (!sizes && kind === 'w') {
-    sizes = '100vw'
+    // It's intended to keep `src` the last attribute because React updates
+    // attributes in order. If we keep `src` the first one, Safari will
+    // immediately start to fetch `src`, before `sizes` and `srcSet` are even
+    // updated by React. That causes multiple unnecessary requests if `srcSet`
+    // and `sizes` are defined.
+    // This bug cannot be reproduced in Chrome or Firefox.
+    src: loader({ src, quality, width: widths[last] }),
   }
-
-  src = callLoader({ src, quality, width: widths[last] })
-
-  return { src, sizes, srcSet }
 }
 
 function getInt(x: unknown): number | undefined {
@@ -177,6 +245,46 @@ function getInt(x: unknown): number | undefined {
     return parseInt(x, 10)
   }
   return undefined
+}
+
+function defaultImageLoader(loaderProps: ImageLoaderProps) {
+  const load = loaders.get(configLoader)
+  if (load) {
+    return load({ root: configPath, ...loaderProps })
+  }
+  throw new Error(
+    `Unknown "loader" found in "next.config.js". Expected: ${VALID_LOADERS.join(
+      ', '
+    )}. Received: ${configLoader}`
+  )
+}
+
+// See https://stackoverflow.com/q/39777833/266535 for why we use this ref
+// handler instead of the img's onLoad attribute.
+function removePlaceholder(
+  img: HTMLImageElement | null,
+  placeholder: PlaceholderValue
+) {
+  if (placeholder === 'blur' && img) {
+    const handleLoad = () => {
+      if (!img.src.startsWith('data:')) {
+        const p = 'decode' in img ? img.decode() : Promise.resolve()
+        p.catch(() => {}).then(() => {
+          img.style.filter = 'none'
+          img.style.backgroundSize = 'none'
+          img.style.backgroundImage = 'none'
+        })
+      }
+    }
+    if (img.complete) {
+      // If the real image fails to load, this will still remove the placeholder.
+      // This is the desired behavior for now, and will be revisited when error
+      // handling is worked on for the image component itself.
+      handleLoad()
+    } else {
+      img.onload = handleLoad
+    }
+  }
 }
 
 export default function Image({
@@ -191,22 +299,51 @@ export default function Image({
   height,
   objectFit,
   objectPosition,
+  loader = defaultImageLoader,
+  placeholder = 'empty',
+  blurDataURL,
   ...all
 }: ImageProps) {
   let rest: Partial<ImageProps> = all
   let layout: NonNullable<LayoutValue> = sizes ? 'responsive' : 'intrinsic'
-  let unsized = false
-  if ('unsized' in rest) {
-    unsized = Boolean(rest.unsized)
-    // Remove property so it's not spread into image:
-    delete rest['unsized']
-  } else if ('layout' in rest) {
+  if ('layout' in rest) {
     // Override default layout if the user specified one:
     if (rest.layout) layout = rest.layout
 
     // Remove property so it's not spread into image:
     delete rest['layout']
   }
+
+  let staticSrc = ''
+  if (isStaticImport(src)) {
+    const staticImageData = isStaticRequire(src) ? src.default : src
+
+    if (!staticImageData.src) {
+      throw new Error(
+        `An object should only be passed to the image component src parameter if it comes from a static image import. It must include src. Received ${JSON.stringify(
+          staticImageData
+        )}`
+      )
+    }
+    blurDataURL = blurDataURL || staticImageData.blurDataURL
+    staticSrc = staticImageData.src
+    if (!layout || layout !== 'fill') {
+      height = height || staticImageData.height
+      width = width || staticImageData.width
+      if (!staticImageData.height || !staticImageData.width) {
+        throw new Error(
+          `An object should only be passed to the image component src parameter if it comes from a static image import. It must include height and width. Received ${JSON.stringify(
+            staticImageData
+          )}`
+        )
+      }
+    }
+  }
+  src = typeof src === 'string' ? src : staticSrc
+
+  const widthInt = getInt(width)
+  const heightInt = getInt(height)
+  const qualityInt = getInt(quality)
 
   if (process.env.NODE_ENV !== 'production') {
     if (!src) {
@@ -235,13 +372,28 @@ export default function Image({
         `Image with src "${src}" has both "priority" and "loading='lazy'" properties. Only one should be used.`
       )
     }
-    if (unsized) {
-      throw new Error(
-        `Image with src "${src}" has deprecated "unsized" property, which was removed in favor of the "layout='fill'" property`
-      )
+    if (placeholder === 'blur') {
+      if ((widthInt || 0) * (heightInt || 0) < 1600) {
+        console.warn(
+          `Image with src "${src}" is smaller than 40x40. Consider removing the "placeholder='blur'" property to improve performance.`
+        )
+      }
+      if (!blurDataURL) {
+        const VALID_BLUR_EXT = ['jpeg', 'png', 'webp'] // should match next-image-loader
+
+        throw new Error(
+          `Image with src "${src}" has "placeholder='blur'" property but is missing the "blurDataURL" property.
+          Possible solutions:
+            - Add a "blurDataURL" property, the contents should be a small Data URL to represent the image
+            - Change the "src" property to a static import with one of the supported file types: ${VALID_BLUR_EXT.join(
+              ','
+            )}
+            - Remove the "placeholder" property, effectively no blur effect
+          Read more: https://nextjs.org/docs/messages/placeholder-blur-data-url`
+        )
+      }
     }
   }
-
   let isLazy =
     !priority && (loading === 'lazy' || typeof loading === 'undefined')
   if (src && src.startsWith('data:')) {
@@ -256,16 +408,10 @@ export default function Image({
   })
   const isVisible = !isLazy || isIntersected
 
-  const widthInt = getInt(width)
-  const heightInt = getInt(height)
-  const qualityInt = getInt(quality)
-
   let wrapperStyle: JSX.IntrinsicElements['div']['style'] | undefined
   let sizerStyle: JSX.IntrinsicElements['div']['style'] | undefined
   let sizerSvg: string | undefined
   let imgStyle: ImgElementStyle | undefined = {
-    visibility: isVisible ? 'inherit' : 'hidden',
-
     position: 'absolute',
     top: 0,
     left: 0,
@@ -287,6 +433,14 @@ export default function Image({
 
     objectFit,
     objectPosition,
+
+    ...(placeholder === 'blur'
+      ? {
+          filter: 'blur(20px)',
+          backgroundSize: 'cover',
+          backgroundImage: `url("${blurDataURL}")`,
+        }
+      : undefined),
   }
   if (
     typeof widthInt !== 'undefined' &&
@@ -377,14 +531,10 @@ export default function Image({
       width: widthInt,
       quality: qualityInt,
       sizes,
+      loader,
     })
   }
 
-  if (unsized) {
-    wrapperStyle = undefined
-    sizerStyle = undefined
-    imgStyle = undefined
-  }
   return (
     <div style={wrapperStyle}>
       {sizerStyle ? (
@@ -406,12 +556,36 @@ export default function Image({
           ) : null}
         </div>
       ) : null}
+      {!isVisible && (
+        <noscript>
+          <img
+            {...rest}
+            {...generateImgAttrs({
+              src,
+              unoptimized,
+              layout,
+              width: widthInt,
+              quality: qualityInt,
+              sizes,
+              loader,
+            })}
+            src={src}
+            decoding="async"
+            sizes={sizes}
+            style={imgStyle}
+            className={className}
+          />
+        </noscript>
+      )}
       <img
         {...rest}
         {...imgAttributes}
         decoding="async"
         className={className}
-        ref={setRef}
+        ref={(element) => {
+          setRef(element)
+          removePlaceholder(element, placeholder)
+        }}
         style={imgStyle}
       />
       {priority ? (
@@ -444,13 +618,16 @@ export default function Image({
 
 //BUILT IN LOADERS
 
-type LoaderProps = CallLoaderProps & { root: string }
-
-function normalizeSrc(src: string) {
+function normalizeSrc(src: string): string {
   return src[0] === '/' ? src.slice(1) : src
 }
 
-function imgixLoader({ root, src, width, quality }: LoaderProps): string {
+function imgixLoader({
+  root,
+  src,
+  width,
+  quality,
+}: DefaultImageLoaderProps): string {
   // Demo: https://static.imgix.net/daisy.png?format=auto&fit=max&w=300
   const params = ['auto=format', 'fit=max', 'w=' + width]
   let paramsString = ''
@@ -464,18 +641,28 @@ function imgixLoader({ root, src, width, quality }: LoaderProps): string {
   return `${root}${normalizeSrc(src)}${paramsString}`
 }
 
-function akamaiLoader({ root, src, width }: LoaderProps): string {
+function akamaiLoader({ root, src, width }: DefaultImageLoaderProps): string {
   return `${root}${normalizeSrc(src)}?imwidth=${width}`
 }
 
-function cloudinaryLoader({ root, src, width, quality }: LoaderProps): string {
+function cloudinaryLoader({
+  root,
+  src,
+  width,
+  quality,
+}: DefaultImageLoaderProps): string {
   // Demo: https://res.cloudinary.com/demo/image/upload/w_300,c_limit,q_auto/turtles.jpg
   const params = ['f_auto', 'c_limit', 'w_' + width, 'q_' + (quality || 'auto')]
   let paramsString = params.join(',') + '/'
   return `${root}${paramsString}${normalizeSrc(src)}`
 }
 
-function defaultLoader({ root, src, width, quality }: LoaderProps): string {
+function defaultLoader({
+  root,
+  src,
+  width,
+  quality,
+}: DefaultImageLoaderProps): string {
   if (process.env.NODE_ENV !== 'production') {
     const missingValues = []
 
@@ -513,7 +700,7 @@ function defaultLoader({ root, src, width, quality }: LoaderProps): string {
       if (!configDomains.includes(parsedSrc.hostname)) {
         throw new Error(
           `Invalid src prop (${src}) on \`next/image\`, hostname "${parsedSrc.hostname}" is not configured under images in your \`next.config.js\`\n` +
-            `See more info: https://err.sh/next.js/next-image-unconfigured-host`
+            `See more info: https://nextjs.org/docs/messages/next-image-unconfigured-host`
         )
       }
     }

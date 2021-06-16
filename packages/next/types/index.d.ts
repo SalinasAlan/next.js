@@ -15,6 +15,11 @@ import {
   // @ts-ignore This path is generated at build time and conflicts otherwise
 } from '../dist/next-server/lib/utils'
 
+import {
+  NextApiRequestCookies,
+  // @ts-ignore This path is generated at build time and conflicts otherwise
+} from '../dist/next-server/server/api-utils'
+
 // @ts-ignore This path is generated at build time and conflicts otherwise
 import next from '../dist/server/next'
 
@@ -74,6 +79,7 @@ export type PageConfig = {
   }
   env?: Array<string>
   unstable_runtimeJS?: false
+  unstable_JsPreload?: false
 }
 
 export {
@@ -84,10 +90,12 @@ export {
   NextApiHandler,
 }
 
+export type PreviewData = string | false | object | undefined
+
 export type GetStaticPropsContext<Q extends ParsedUrlQuery = ParsedUrlQuery> = {
   params?: Q
   preview?: boolean
-  previewData?: any
+  previewData?: PreviewData
   locale?: string
   locales?: string[]
   defaultLocale?: string
@@ -101,13 +109,15 @@ export type GetStaticPropsResult<P> =
 export type GetStaticProps<
   P extends { [key: string]: any } = { [key: string]: any },
   Q extends ParsedUrlQuery = ParsedUrlQuery
-> = (context: GetStaticPropsContext<Q>) => Promise<GetStaticPropsResult<P>>
+> = (
+  context: GetStaticPropsContext<Q>
+) => Promise<GetStaticPropsResult<P>> | GetStaticPropsResult<P>
 
 export type InferGetStaticPropsType<T> = T extends GetStaticProps<infer P, any>
   ? P
   : T extends (
       context?: GetStaticPropsContext<any>
-    ) => Promise<GetStaticPropsResult<infer P>>
+    ) => Promise<GetStaticPropsResult<infer P>> | GetStaticPropsResult<infer P>
   ? P
   : never
 
@@ -123,19 +133,19 @@ export type GetStaticPathsResult<P extends ParsedUrlQuery = ParsedUrlQuery> = {
 
 export type GetStaticPaths<P extends ParsedUrlQuery = ParsedUrlQuery> = (
   context: GetStaticPathsContext
-) => Promise<GetStaticPathsResult<P>>
+) => Promise<GetStaticPathsResult<P>> | GetStaticPathsResult<P>
 
 export type GetServerSidePropsContext<
   Q extends ParsedUrlQuery = ParsedUrlQuery
 > = {
   req: IncomingMessage & {
-    cookies?: { [key: string]: any }
+    cookies: NextApiRequestCookies
   }
   res: ServerResponse
   params?: Q
   query: ParsedUrlQuery
   preview?: boolean
-  previewData?: any
+  previewData?: PreviewData
   resolvedUrl: string
   locale?: string
   locales?: string[]

@@ -1509,7 +1509,7 @@ describe('CSS Support', () => {
           await browser.waitForElementByCss('#link-other').click()
           await check(
             () => browser.eval(`document.body.innerText`),
-            'An unexpected error has occurred.',
+            'Application error: a client-side exception has occurred (developer guidance).',
             true
           )
 
@@ -1817,11 +1817,11 @@ describe('CSS Support', () => {
 
         // if it is the combined global CSS file there are double the expected
         // results
-        const howMany = content.includes('p{') ? 4 : 2
+        const howMany = content.includes('p{') || content.includes('p,') ? 2 : 1
 
         expect(content.match(/\(\/vercel\.svg/g).length).toBe(howMany)
         // expect(content.match(/\(vercel\.svg/g).length).toBe(howMany)
-        expect(content.match(/\(\/_next\/static\/media/g).length).toBe(2)
+        expect(content.match(/\(\/_next\/static\/media/g).length).toBe(1)
         expect(content.match(/\(https:\/\//g).length).toBe(howMany)
       }
     })

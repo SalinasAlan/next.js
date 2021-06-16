@@ -1,15 +1,16 @@
 // @ts-nocheck
 import * as path from 'path'
-
-import webpack, { ModuleFilenameHelpers, Compilation } from 'webpack'
-import sources from 'webpack-sources'
+import {
+  webpack,
+  ModuleFilenameHelpers,
+  isWebpack5,
+  sources,
+} from 'next/dist/compiled/webpack/webpack'
 import pLimit from 'p-limit'
-import jestWorker from 'jest-worker'
+import { Worker } from 'jest-worker'
 import crypto from 'crypto'
 import cacache from 'next/dist/compiled/cacache'
-import { tracer, traceAsyncFn } from '../../../../tracer'
-
-const isWebpack5 = parseInt(webpack.version) === 5
+import { spans } from '../../profiling-plugin'
 
 function getEcmaVersion(environment) {
   // ES 6th
@@ -101,7 +102,7 @@ class Webpack4Cache {
   }
 }
 
-class TerserPlugin {
+export class TerserPlugin {
   constructor(options = {}) {
     const { cacheDir, terserOptions = {}, parallel } = options
 
@@ -113,20 +114,19 @@ class TerserPlugin {
   }
 
   async optimize(
+    compiler,
     compilation,
     assets,
     optimizeOptions,
     cache,
     { SourceMapSource, RawSource }
   ) {
-    const span = tracer.startSpan('terser-webpack-plugin-optimize', {
-      attributes: {
-        webpackVersion: isWebpack5 ? 5 : 4,
-        compilationName: compilation.name,
-      },
-    })
+    const compilerSpan = spans.get(compiler)
+    const terserSpan = compilerSpan.traceChild('terser-webpack-plugin-optimize')
+    terserSpan.setAttribute('webpackVersion', isWebpack5 ? 5 : 4)
+    terserSpan.setAttribute('compilationName', compilation.name)
 
-    return traceAsyncFn(span, async () => {
+    return terserSpan.traceAsyncFn(async () => {
       let numberOfAssetsForMinify = 0
       const assetsList = isWebpack5
         ? Object.keys(assets)
@@ -192,13 +192,10 @@ class TerserPlugin {
           return initializedWorker
         }
 
-        initializedWorker = new jestWorker(
-          path.join(__dirname, './minify.js'),
-          {
-            numWorkers: numberOfWorkers,
-            enableWorkerThreads: true,
-          }
-        )
+        initializedWorker = new Worker(path.join(__dirname, './minify.js'), {
+          numWorkers: numberOfWorkers,
+          enableWorkerThreads: true,
+        })
 
         initializedWorker.getStdout().pipe(process.stdout)
         initializedWorker.getStderr().pipe(process.stderr)
@@ -217,20 +214,18 @@ class TerserPlugin {
             const { name, inputSource, info, eTag } = asset
             let { output } = asset
 
-            const assetSpan = tracer.startSpan('minify-js', {
-              attributes: {
-                name,
-                cache: typeof output === 'undefined' ? 'MISS' : 'HIT',
-              },
-            })
+            const minifySpan = terserSpan.traceChild('minify-fs')
+            minifySpan.setAttribute('name', name)
+            minifySpan.setAttribute(
+              'cache',
+              typeof output === 'undefined' ? 'MISS' : 'HIT'
+            )
 
-            return traceAsyncFn(assetSpan, async () => {
+            return minifySpan.traceAsyncFn(async () => {
               if (!output) {
-                let inputSourceMap
-
                 const {
                   source: sourceFromInputSource,
-                  map,
+                  map: inputSourceMap,
                 } = inputSource.sourceAndMap()
 
                 const input = Buffer.isBuffer(sourceFromInputSource)
@@ -240,7 +235,7 @@ class TerserPlugin {
                 const options = {
                   name,
                   input,
-                  inputSourceMap: map,
+                  inputSourceMap,
                   terserOptions: { ...this.options.terserOptions },
                 }
 
@@ -337,8 +332,8 @@ class TerserPlugin {
           })
 
       const handleHashForChunk = (hash, chunk) => {
-        // increment 'b' to invalidate cache
-        hash.update('b')
+        // increment 'c' to invalidate cache
+        hash.update('c')
       }
 
       if (isWebpack5) {
@@ -353,10 +348,11 @@ class TerserPlugin {
         compilation.hooks.processAssets.tapPromise(
           {
             name: pluginName,
-            stage: Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_SIZE,
+            stage: webpack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_SIZE,
           },
           (assets) =>
             this.optimize(
+              compiler,
               compilation,
               assets,
               {
@@ -389,6 +385,7 @@ class TerserPlugin {
           pluginName,
           async (assets) => {
             return await this.optimize(
+              compiler,
               compilation,
               assets,
               {
@@ -403,5 +400,3 @@ class TerserPlugin {
     })
   }
 }
-
-export default TerserPlugin

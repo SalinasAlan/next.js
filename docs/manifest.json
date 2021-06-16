@@ -26,12 +26,20 @@
               "path": "/docs/basic-features/image-optimization.md"
             },
             {
+              "title": "Font Optimization",
+              "path": "/docs/basic-features/font-optimization.md"
+            },
+            {
               "title": "Static File Serving",
               "path": "/docs/basic-features/static-file-serving.md"
             },
             {
               "title": "Fast Refresh",
               "path": "/docs/basic-features/fast-refresh.md"
+            },
+            {
+              "title": "ESLint",
+              "path": "/docs/basic-features/eslint.md"
             },
             {
               "title": "TypeScript",
@@ -44,6 +52,10 @@
             {
               "title": "Supported Browsers and Features",
               "path": "/docs/basic-features/supported-browsers-features.md"
+            },
+            {
+              "title": "Script",
+              "path": "/docs/basic-features/script.md"
             }
           ]
         },
@@ -213,6 +225,14 @@
             {
               "title": "Migrating from Gatsby",
               "path": "/docs/migrating/from-gatsby.md"
+            },
+            {
+              "title": "Migrating from Create React App",
+              "path": "/docs/migrating/from-create-react-app.md"
+            },
+            {
+              "title": "Migrating from React Router",
+              "path": "/docs/migrating/from-react-router.md"
             }
           ]
         },
@@ -258,6 +278,10 @@
           ]
         },
         {
+          "title": "Static Optimization Indicator",
+          "path": "/docs/api-reference/next.config.js/static-optimization-indicator.md"
+        },
+        {
           "title": "next.config.js",
           "routes": [
             {
@@ -293,10 +317,6 @@
               "path": "/docs/api-reference/next.config.js/cdn-support-with-asset-prefix.md"
             },
             {
-              "title": "Build Target",
-              "path": "/docs/api-reference/next.config.js/build-target.md"
-            },
-            {
               "title": "Custom Webpack Config",
               "path": "/docs/api-reference/next.config.js/custom-webpack-config.md"
             },
@@ -327,6 +347,10 @@
             {
               "title": "Configuring onDemandEntries",
               "path": "/docs/api-reference/next.config.js/configuring-onDemandEntries.md"
+            },
+            {
+              "title": "Ignoring ESLint",
+              "path": "/docs/api-reference/next.config.js/ignoring-eslint.md"
             },
             {
               "title": "Ignoring TypeScript Errors",
